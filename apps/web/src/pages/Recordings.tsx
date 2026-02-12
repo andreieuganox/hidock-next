@@ -27,10 +27,14 @@ export const Recordings: React.FC = () => {
     updateRecording
   } = useAppStore();
 
+  // Log state on every render
+  console.log(`🖼️ UI: Recordings RENDER - ${recordings.length} files, isLoading=${isLoading}, loadingProgress=${loadingProgress ? `${loadingProgress.current}/${loadingProgress.total}` : 'null'} at ${new Date().toLocaleTimeString()}`);
+
   // Log recordings count changes
   React.useEffect(() => {
     console.log(`🖼️ UI: Recordings page re-rendered with ${recordings.length} files at ${new Date().toLocaleTimeString()}`);
-  }, [recordings.length]);
+    console.log(`🔍 UI: isLoading=${isLoading}, loadingProgress=${loadingProgress ? `${loadingProgress.current}/${loadingProgress.total}` : 'null'}`);
+  }, [recordings.length, isLoading, loadingProgress]);
 
   const [playingRecording, setPlayingRecording] = useState<AudioRecording | null>(null);
   const [sortField, setSortField] = useState<SortField>('date');
@@ -330,21 +334,30 @@ export const Recordings: React.FC = () => {
   };
 
   const handlePlayRecording = async (recording: AudioRecording) => {
+    console.log(`🎵 handlePlayRecording called for: ${recording.fileName}`);
+
     if (playingRecording?.id === recording.id) {
+      console.log(`⏸️ Stopping playback for: ${recording.fileName}`);
       setPlayingRecording(null);
       updateRecording(recording.id, { status: 'downloaded' });
     } else {
       try {
+        console.log(`▶️ Starting playback for: ${recording.fileName}`);
+
         // Update status to show loading
         updateRecording(recording.id, { status: 'downloading' });
 
         // Get the audio URL before setting as playing
-        await getAudioUrl(recording);
+        console.log(`📥 Getting audio URL...`);
+        const audioUrl = await getAudioUrl(recording);
+        console.log(`✅ Audio URL obtained: ${audioUrl.substring(0, 50)}...`);
 
+        console.log(`🎵 Setting as playing recording...`);
         setPlayingRecording(recording);
         updateRecording(recording.id, { status: 'playing' });
+        console.log(`✅ Playback started for: ${recording.fileName}`);
       } catch (error) {
-        console.error('Failed to load audio:', error);
+        console.error(`❌ Failed to load audio for ${recording.fileName}:`, error);
         updateRecording(recording.id, { status: 'error' });
         alert(`Failed to load audio: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
@@ -361,13 +374,18 @@ export const Recordings: React.FC = () => {
   const [audioUrls, setAudioUrls] = useState<Map<string, string>>(new Map());
 
   const getAudioUrl = async (recording: AudioRecording): Promise<string> => {
+    console.log(`🎵 getAudioUrl called for: ${recording.fileName}`);
+
     // Check if we already have a URL for this recording
     const existingUrl = audioUrls.get(recording.id);
     if (existingUrl) {
+      console.log(`✅ Using cached URL for: ${recording.fileName}`);
       return existingUrl;
     }
 
     try {
+      console.log(`📥 Starting download for: ${recording.fileName}`);
+
       // Import device service dynamically to avoid circular dependencies
       const { deviceService } = await import('@/services/deviceService');
 
@@ -376,10 +394,12 @@ export const Recordings: React.FC = () => {
         throw new Error('Device not connected. Please connect your HiDock device.');
       }
 
-      // Download with reasonable timeout (should be fast now without file list fetch)
+      // Download with reasonable timeout - increased to 2 minutes for larger files
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Download timeout after 30 seconds')), 30000);
+        setTimeout(() => reject(new Error('Download timeout after 2 minutes')), 120000);
       });
+
+      console.log(`⏳ Calling getAudioBlobUrl for: ${recording.fileName}`);
 
       // Pass the filename and size directly - no more file list fetching!
       const audioUrl = await Promise.race([
@@ -387,12 +407,15 @@ export const Recordings: React.FC = () => {
         timeoutPromise
       ]);
 
+      console.log(`✅ Got audio URL for: ${recording.fileName}, URL: ${audioUrl.substring(0, 50)}...`);
+
       // Store the URL for future use
       setAudioUrls(prev => new Map(prev).set(recording.id, audioUrl));
 
+      console.log(`✅ Audio URL cached and ready for: ${recording.fileName}`);
       return audioUrl;
     } catch (error) {
-      console.error('Failed to get audio URL:', error);
+      console.error(`❌ Failed to get audio URL for ${recording.fileName}:`, error);
       throw error;
     }
   };

@@ -100,8 +100,14 @@ export const useAppStore = create<AppStore>()(
         selectedRecordings: state.selectedRecordings.filter(recordingId => recordingId !== id)
       })),
 
-      setLoading: (loading) => set({ isLoading: loading }),
-      setLoadingProgress: (progress) => set({ loadingProgress: progress }),
+      setLoading: (loading) => {
+        console.log(`🔄 STORE: setLoading(${loading}) called at ${new Date().toLocaleTimeString()}`);
+        return set({ isLoading: loading });
+      },
+      setLoadingProgress: (progress) => {
+        console.log(`📊 STORE: setLoadingProgress(${progress ? `${progress.current}/${progress.total}` : 'null'}) called at ${new Date().toLocaleTimeString()}`);
+        return set({ loadingProgress: progress });
+      },
 
       setError: (error) => set({ error }),
 

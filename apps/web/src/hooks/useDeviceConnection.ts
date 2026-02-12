@@ -90,22 +90,25 @@ export const useDeviceConnection = () => {
   // Auto-reconnect on app startup to previously paired devices
   const tryAutoReconnect = useCallback(async () => {
     if (hasTriedAutoReconnect.current || isDeviceConnected) {
+      console.log('🔄 Skipping auto-reconnect: already tried or connected');
       return;
     }
-    
+
     hasTriedAutoReconnect.current = true;
     console.log('🔄 Attempting auto-reconnection...');
-    
+
     try {
       const connectedDevice = await deviceService.tryAutoReconnect();
       if (connectedDevice) {
+        console.log('✅ Device reconnected, loading recordings...');
         // Set the full device info with storage
         setDevice(connectedDevice);
-        
+
         // Load recordings with streaming
         console.log(`📋 Loading recordings after auto-reconnect...`);
+        setLoading(true);
         setRecordings([]);
-        
+
         deviceService.onProgress('get_recordings', (progress) => {
           setLoadingProgress({
             operation: 'Loading file list',
@@ -121,20 +124,26 @@ export const useDeviceConnection = () => {
           }
         });
 
+        console.log('⏳ Waiting for getRecordings() to complete...');
         const deviceRecordings = await deviceService.getRecordings();
+        console.log(`✅ getRecordings() completed with ${deviceRecordings.length} recordings`);
         setRecordings(deviceRecordings);
-        setLoadingProgress(null);
-        
-        console.log('✅ Auto-reconnection successful');
+
+        console.log('✅ Auto-reconnection successful, recordings loaded');
+      } else {
+        console.log('ℹ️ No device to auto-reconnect');
       }
     } catch (error) {
       console.warn('⚠️ Auto-reconnection failed:', error);
       // Don't show error to user for auto-reconnection failures
     } finally {
+      console.log('🏁 Auto-reconnect finally block: clearing loading state');
+      setLoading(false);
+      setLoadingProgress(null);
       deviceService.removeProgressListener('get_recordings');
       deviceService.removeProgressListener('streaming_files');
     }
-  }, [isDeviceConnected, setDevice, setRecordings, addRecordings, setLoadingProgress]);
+  }, [isDeviceConnected, setDevice, setRecordings, addRecordings, setLoading, setLoadingProgress]);
 
   const refreshRecordings = useCallback(async () => {
     if (!isDeviceConnected) return;

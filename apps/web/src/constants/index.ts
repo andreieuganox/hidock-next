@@ -11,9 +11,11 @@ export const HIDOCK_DEVICE_CONFIG = {
 export const HIDOCK_PRODUCT_IDS = {
   H1: 0xAF0C,
   H1E: 0xAF0D,
-  P1: 0xAF0E,
+  P1: 0xb00e,
   DEFAULT: 0xB00D,
 } as const;
+
+// UI: Recordings page re-rendered with 38 files at 13:12:45
 
 // HiDock Protocol Commands (complete jensen.js protocol)
 export const HIDOCK_COMMANDS = {

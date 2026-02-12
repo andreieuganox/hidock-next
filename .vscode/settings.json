@@ -14,5 +14,11 @@
     // Set working directory for relative import resolution & config discovery
     "flake8.cwd": "${workspaceFolder}",
     // Optional: show Pylance in basic mode consistent with repo template config
-    "python.analysis.typeCheckingMode": "basic"
+    "python.analysis.typeCheckingMode": "basic",
+    "yaml.schemas": {
+        "file:///Users/andrei.popov/.vscode/extensions/continue.continue-1.2.11-darwin-arm64/config-yaml-schema.json": [
+            ".continue/**/*.yaml"
+        ],
+        "https://www.artillery.io/schema.json": []
+    }
 }
