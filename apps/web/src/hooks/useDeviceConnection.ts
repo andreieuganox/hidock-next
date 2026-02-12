@@ -42,7 +42,7 @@ export const useDeviceConnection = () => {
       deviceService.onProgress('get_recordings', (progress) => {
         console.log(`📊 HOOK: Progress update - ${progress.progress}/${progress.total} - ${progress.message} at ${new Date().toLocaleTimeString()}`);
         setLoadingProgress({
-          operation: 'Loading file list',
+          operation: 'Loading file list5',
           current: progress.progress,
           total: progress.total || 100,
           message: progress.message || `Loading recordings...`
@@ -60,9 +60,9 @@ export const useDeviceConnection = () => {
       // Load recordings with streaming
       console.log('🔄 HOOK: Starting getRecordings...');
       const deviceRecordings = await deviceService.getRecordings();
-      console.log(`✅ HOOK: getRecordings completed with ${deviceRecordings.length} total files`);
-      // Note: files should already be added via streaming, but set final result to be safe
-      setRecordings(deviceRecordings);
+      // console.log(`✅ HOOK: getRecordings completed with ${deviceRecordings.length} total files`);
+      // // Note: files should already be added via streaming, but set final result to be safe
+      // setRecordings(deviceRecordings);
 
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to connect device');
@@ -108,7 +108,7 @@ export const useDeviceConnection = () => {
         
         deviceService.onProgress('get_recordings', (progress) => {
           setLoadingProgress({
-            operation: 'Loading file list',
+            operation: 'Loading file list3',
             current: progress.progress,
             total: progress.total || 100,
             message: progress.message || 'Loading recordings...'

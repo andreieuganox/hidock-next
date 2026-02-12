@@ -1,7 +1,7 @@
 // HiDock Device Constants (matching jensen.js protocol)
 export const HIDOCK_DEVICE_CONFIG = {
-  VENDOR_ID: 0x10D6, // Actions Semiconductor
-  PRODUCT_ID: 0xB00D, // HiDock H1E default
+  VENDOR_ID: 0x10d6, // Actions Semiconductor
+  PRODUCT_ID: 0xb00e, // HiDock H1E default
   INTERFACE_NUMBER: 0,
   ENDPOINT_IN: 2,     // Endpoint 2 for IN direction (from jensen.js)
   ENDPOINT_OUT: 1,    // Endpoint 1 for OUT direction (from jensen.js)
@@ -11,7 +11,7 @@ export const HIDOCK_DEVICE_CONFIG = {
 export const HIDOCK_PRODUCT_IDS = {
   H1: 0xAF0C,
   H1E: 0xAF0D,
-  P1: 0xAF0E,
+  P1: 0xb00e,
   DEFAULT: 0xB00D,
 } as const;
 
@@ -72,7 +72,7 @@ export const GEMINI_MODELS = {
 // Audio Constants
 export const AUDIO_CONFIG = {
   SUPPORTED_FORMATS: ['audio/wav', 'audio/mp3', 'audio/m4a', 'audio/ogg'] as const,
-  MAX_FILE_SIZE: 25 * 1024 * 1024, // 25MB
+  MAX_FILE_SIZE: 125 * 1024 * 1024, // 25MB
   SAMPLE_RATE: 44100,
   CHANNELS: 2,
 } as const;

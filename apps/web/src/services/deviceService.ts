@@ -456,6 +456,63 @@ class DeviceService {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    private async recoverDevice(): Promise<void> {
+        console.log(`🔧 Starting device recovery...`);
+
+        if (!this.device || !this.isConnected) {
+            throw new Error('Device not connected');
+        }
+
+        try {
+            // Clear our receive buffer
+            this.receiveBuffer = new Uint8Array(0);
+            console.log(`🔧 Cleared receive buffer`);
+
+            // Flush USB IN endpoint by reading any pending data with short timeout
+            console.log(`🔧 Flushing USB IN endpoint...`);
+            for (let i = 0; i < 5; i++) {  // Reduced from 20 to 5 attempts
+                try {
+                    // Use Promise.race to add a short timeout to each flush attempt
+                    const transferPromise = this.device.transferIn(HIDOCK_DEVICE_CONFIG.ENDPOINT_IN, 64);
+                    const timeoutPromise = new Promise<never>((_, reject) => {
+                        setTimeout(() => reject(new Error('FLUSH_TIMEOUT')), 500); // 500ms timeout per attempt
+                    });
+
+                    const result = await Promise.race([transferPromise, timeoutPromise]);
+                    if (!result.data || result.data.byteLength === 0) {
+                        console.log(`🔧 USB IN endpoint flushed after ${i + 1} attempts`);
+                        break;
+                    }
+                    console.log(`🔧 Flushed ${result.data.byteLength} bytes from USB IN endpoint`);
+                } catch (error) {
+                    if (error instanceof Error && error.message === 'FLUSH_TIMEOUT') {
+                        console.log(`🔧 USB IN endpoint flushed (timeout after ${i + 1} attempts)`);
+                        break;
+                    } else if (error instanceof DOMException && error.name === 'NetworkError') {
+                        // Timeout is expected when buffer is empty
+                        console.log(`🔧 USB IN endpoint flushed (NetworkError after ${i + 1} attempts)`);
+                        break;
+                    }
+                    console.warn(`🔧 Error during USB flush attempt ${i + 1}:`, error);
+                    break;
+                }
+            }
+
+            // Reset sequence ID to avoid conflicts
+            this.sequenceId = 1;
+            console.log(`🔧 Reset sequence ID to 1`);
+
+            // Small delay to let device settle
+            await this.delay(100);
+
+            console.log(`🔧 Device recovery completed`);
+
+        } catch (error) {
+            console.error(`🔧 Device recovery failed:`, error);
+            throw error;
+        }
+    }
+
     private updateProgress(operationId: string, progress: DeviceOperationProgress): void {
         const callback = this.progressCallbacks.get(operationId);
         if (callback) {
@@ -598,7 +655,7 @@ class DeviceService {
         
         try {
             this.updateProgress('get_recordings', {
-                operation: 'Getting file list',
+                operation: 'Getting file list2',
                 progress: 0,
                 total: 100,
                 status: 'in_progress'
@@ -612,7 +669,7 @@ class DeviceService {
                 HIDOCK_COMMANDS.GET_FILE_LIST,
                 (fileCount: number, totalFiles: number, packetCount: number) => {
                     this.updateProgress('get_recordings', {
-                        operation: `Loading file list`,
+                        operation: `Loading file list2`,
                         progress: fileCount,
                         total: totalFiles || 500, // Use estimated total until we know the real total
                         status: 'in_progress',
@@ -632,6 +689,8 @@ class DeviceService {
                     });
                 }
             );
+
+            console.log(recordings);
 
             this.updateProgress('get_recordings', {
                 operation: `Found ${recordings.length} recordings`,
@@ -884,39 +943,51 @@ class DeviceService {
     }
 
     private async downloadFileBlocks(fileName: string, fileSize: number, progressId: string): Promise<ArrayBuffer> {
-        console.log(`📥 Starting single-block download for: ${fileName} (${fileSize} bytes) using jensen.js protocol`);
-        
+        console.log(`📥 Starting file download for: ${fileName} (${fileSize} bytes)`);
+
+        // Prepare filename bytes outside try block so it's available for retry
+        const encoder = new TextEncoder();
+        const filenameBytes = encoder.encode(fileName);
+
         try {
-            // Build command body following jensen.js format: 4-byte length (big-endian) + filename
-            const body = new Uint8Array(4 + fileName.length);
-            const view = new DataView(body.buffer);
-            
-            // Big-endian file size (total length to download)
-            view.setUint32(0, fileSize, false); // Big-endian file size
-            
-            // Add filename
-            const encoder = new TextEncoder();
-            const filenameBytes = encoder.encode(fileName);
-            body.set(filenameBytes, 4);
-            
-            console.log(`📥 Sending GET_FILE_BLOCK command: length=${fileSize}, filename="${fileName}"`);
-            
-            // Send GET_FILE_BLOCK command
-            const seqId = await this.sendCommand(HIDOCK_COMMANDS.GET_FILE_BLOCK, body);
-            
-            // Receive the file data in streaming fashion (jensen.js style)
-            const fileData = await this.receiveFileDataStream(seqId, fileSize, progressId);
-            
-            console.log(`✅ Download completed: ${fileData.byteLength} bytes`);
+            // Use TRANSFER_FILE exactly like desktop app (command 5, filename only)
+            console.log(`📥 Using TRANSFER_FILE like desktop app (cmd 5, filename only)...`);
+
+            console.log(`📥 Sending TRANSFER_FILE: filename="${fileName}"`);
+            console.log(`📥 Command body (${filenameBytes.length} bytes):`, Array.from(filenameBytes).map(b => b.toString(16).padStart(2, '0')).join(' '));
+
+            // Use 10-second timeout for initial command (like desktop)
+            const seqId = await this.sendCommand(HIDOCK_COMMANDS.TRANSFER_FILE, filenameBytes);
+
+            console.log(`📥 Starting file stream with desktop-compatible timeouts...`);
+            const fileData = await this.receiveFileDataStream(seqId, fileSize, progressId, HIDOCK_COMMANDS.TRANSFER_FILE);
+
+            console.log(`✅ Download completed with TRANSFER_FILE: ${fileData.byteLength} bytes`);
             return fileData;
-            
+
         } catch (error) {
             console.error(`Failed to download file:`, error);
-            throw new Error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+            // If direct download fails, try recovery and retry once (like desktop version)
+            console.log(`📥 Download failed, attempting recovery and retry...`);
+            try {
+                await this.recoverDevice();
+
+                // Retry with TRANSFER_FILE command after recovery
+                console.log(`📥 Retrying with TRANSFER_FILE after recovery...`);
+                const retrySeqId = await this.sendCommand(HIDOCK_COMMANDS.TRANSFER_FILE, filenameBytes);
+                const retryFileData = await this.receiveFileDataStream(retrySeqId, fileSize, progressId, HIDOCK_COMMANDS.TRANSFER_FILE);
+
+                console.log(`✅ Download completed after recovery: ${retryFileData.byteLength} bytes`);
+                return retryFileData;
+            } catch (retryError) {
+                console.error(`📥 Retry after recovery also failed:`, retryError);
+                throw new Error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
         }
     }
 
-    private async receiveFileDataStream(seqId: number, expectedSize: number, progressId: string): Promise<ArrayBuffer> {
+    private async receiveFileDataStream(seqId: number, expectedSize: number, progressId: string, commandId: number = HIDOCK_COMMANDS.TRANSFER_FILE): Promise<ArrayBuffer> {
         console.log(`📥 Starting streamed file data receive, expected size: ${expectedSize} bytes`);
         const chunks: Uint8Array[] = [];
         let totalReceived = 0;
@@ -932,7 +1003,10 @@ class DeviceService {
 
             try {
                 console.log(`📥 Waiting for chunk ${chunkCount + 1}, received so far: ${totalReceived}/${expectedSize}`);
-                const response = await this.receiveResponse(seqId, 15000, HIDOCK_COMMANDS.GET_FILE_BLOCK);
+                // Use desktop app timeouts: 15s for all chunks (like desktop)
+                const chunkTimeout = 15000;
+                console.log(`📥 Using ${chunkTimeout/1000}s timeout for chunk ${chunkCount + 1} (desktop compatible)`);
+                const response = await this.receiveResponse(seqId, chunkTimeout, commandId);
                 chunkCount++;
 
                 if (!response.data || response.data.length === 0) {
@@ -1114,16 +1188,44 @@ class DeviceService {
         return packet;
     }
 
+    private logPacket(direction: 'SEND' | 'RECV', data: Uint8Array, description: string) {
+        const hex = Array.from(data.slice(0, 64)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        const ascii = Array.from(data.slice(0, 64)).map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+        console.log(`🔍 ${direction}: ${description}`);
+        console.log(`🔍 HEX: ${hex}${data.length > 64 ? '...' : ''}`);
+        console.log(`🔍 ASCII: ${ascii}${data.length > 64 ? '...' : ''}`);
+
+        // Parse HiDock packet if it looks like one
+        if (data.length >= 12 && data[0] === 0x12 && data[1] === 0x34) {
+            const view = new DataView(data.buffer, data.byteOffset);
+            const cmdId = view.getUint16(2, false); // Big-endian
+            const seqId = view.getUint32(4, false); // Big-endian
+            const bodyLen = view.getUint32(8, false); // Big-endian
+            console.log(`🔍 PARSED: CMD=${cmdId}, SEQ=${seqId}, LEN=${bodyLen}`);
+            if (data.length > 12) {
+                const bodyHex = Array.from(data.slice(12, Math.min(data.length, 32))).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                console.log(`🔍 BODY: ${bodyHex}${data.length > 32 ? '...' : ''}`);
+            }
+        }
+        console.log('---');
+    }
+
     private async sendCommand(commandId: number, bodyBytes: Uint8Array = new Uint8Array(0)): Promise<number> {
         if (!this.device || !this.isConnected) {
             throw new Error('Device not connected');
         }
 
         const packet = this.buildPacket(commandId, bodyBytes);
+
+        // Log the outgoing packet
+        this.logPacket('SEND', packet, `CMD ${commandId} SEQ ${this.sequenceId}`);
+
         const startTime = Date.now();
 
         try {
+            console.log(`🔌 USB OUT: Sending ${packet.length} bytes to endpoint ${HIDOCK_DEVICE_CONFIG.ENDPOINT_OUT}`);
             const result = await this.device.transferOut(HIDOCK_DEVICE_CONFIG.ENDPOINT_OUT, packet);
+            console.log(`🔌 USB OUT: Result status=${result.status}, bytesWritten=${result.bytesWritten}`);
 
             // Update performance statistics
             this.operationStats.commandsSent++;
@@ -1168,10 +1270,24 @@ class DeviceService {
             try {
                 // Read data from device with larger buffer for better performance
                 const readSize = 4096 * 16; // 64KB buffer
-                const result = await this.device.transferIn(HIDOCK_DEVICE_CONFIG.ENDPOINT_IN, readSize);
+
+                // Add timeout to the USB transfer operation
+                console.log(`🔌 USB IN: Reading from endpoint ${HIDOCK_DEVICE_CONFIG.ENDPOINT_IN}, buffer size ${readSize}`);
+                const transferPromise = this.device.transferIn(HIDOCK_DEVICE_CONFIG.ENDPOINT_IN, readSize);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error('USB_TRANSFER_TIMEOUT')), 2000); // 2 second timeout per transfer
+                });
+
+                const result = await Promise.race([transferPromise, timeoutPromise]);
+                console.log(`🔌 USB IN: Result status=${result.status}, bytesRead=${result.data?.byteLength || 0}`);
 
                 if (result.status === 'ok' && result.data) {
                     const newData = new Uint8Array(result.data.buffer);
+
+                    // Log incoming data
+                    if (newData.length > 0) {
+                        this.logPacket('RECV', newData, `${newData.length} bytes received`);
+                    }
 
                     // Append to receive buffer
                     const combined = new Uint8Array(this.receiveBuffer.length + newData.length);
@@ -1204,7 +1320,10 @@ class DeviceService {
                     }
                 }
             } catch (error) {
-                if (error instanceof DOMException) {
+                if (error instanceof Error && error.message === 'USB_TRANSFER_TIMEOUT') {
+                    this.incrementErrorCount('usbTimeout');
+                    continue; // Our custom timeout, continue trying
+                } else if (error instanceof DOMException) {
                     if (error.name === 'NetworkError') {
                         this.incrementErrorCount('usbTimeout');
                         continue; // Timeout is expected, continue trying
@@ -1244,7 +1363,14 @@ class DeviceService {
             try {
                 // Read data from device
                 const readSize = 4096 * 16; // 64KB buffer
-                const result = await this.device.transferIn(HIDOCK_DEVICE_CONFIG.ENDPOINT_IN, readSize);
+
+                // Add timeout to the USB transfer operation
+                const transferPromise = this.device.transferIn(HIDOCK_DEVICE_CONFIG.ENDPOINT_IN, readSize);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error('USB_TRANSFER_TIMEOUT')), 2000); // 2 second timeout per transfer
+                });
+
+                const result = await Promise.race([transferPromise, timeoutPromise]);
 
                 if (result.status === 'ok' && result.data) {
                     const newData = new Uint8Array(result.data.buffer);
@@ -1304,15 +1430,22 @@ class DeviceService {
                 }
 
             } catch (error) {
-                if (error instanceof DOMException && error.name === 'NetworkError') {
-                    // USB timeout is normal when no more data is available
+                if (error instanceof Error && error.message === 'USB_TRANSFER_TIMEOUT') {
+                    // Our custom timeout is normal when no more data is available
                     if (allData.length > 0) {
-                        console.debug('USB timeout but we have data, ending stream');
+                        console.debug('USB transfer timeout but we have data, ending stream');
                         break;
                     }
+                } else if (error instanceof DOMException && error.name === 'NetworkError') {
+                    // USB timeout is normal when no more data is available
+                    if (allData.length > 0) {
+                        console.debug('USB NetworkError timeout but we have data, ending stream');
+                        break;
+                    }
+                } else {
+                    console.error('Error in streaming packet reception:', error);
+                    throw error;
                 }
-                console.error('Error in streaming packet reception:', error);
-                throw error;
             }
         }
 
@@ -1349,13 +1482,23 @@ class DeviceService {
         let packetCount = 0;
         let totalFilesFromHeader = 0;
         let partialPacketBuffer = new Uint8Array(0);
+        let consecutiveTimeouts = 0;
+        const maxConsecutiveTimeouts = 3;
 
         while (Date.now() - startTime < timeoutMs) {
             try {
                 const readSize = 4096 * 16; // 64KB buffer
-                const result = await this.device.transferIn(HIDOCK_DEVICE_CONFIG.ENDPOINT_IN, readSize);
+
+                // Add timeout to the USB transfer operation
+                const transferPromise = this.device.transferIn(HIDOCK_DEVICE_CONFIG.ENDPOINT_IN, readSize);
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error('USB_TRANSFER_TIMEOUT')), 2000); // 2 second timeout per transfer
+                });
+
+                const result = await Promise.race([transferPromise, timeoutPromise]);
 
                 if (result.status === 'ok' && result.data) {
+                    consecutiveTimeouts = 0; // Reset timeout counter on successful data
                     const newData = new Uint8Array(result.data.buffer);
 
                     // Append to receive buffer
@@ -1376,74 +1519,87 @@ class DeviceService {
                         // Check if this is a streaming packet for our command
                         if (packet.cmdId === streamingCmdId || packet.seqId === initialSeqId) {
                             packetCount++;
-                            
+
                             // Combine with any leftover data from previous packet
                             const currentData = new Uint8Array(partialPacketBuffer.length + packet.data.length);
                             currentData.set(partialPacketBuffer);
                             currentData.set(packet.data, partialPacketBuffer.length);
-                            
+
                             // Parse files from this packet data
                             const { parsedFiles, remainingBuffer, headerTotal } = this.parsePartialFileList(currentData, totalFilesFromHeader);
-                            
+
                             // Update total if we found it in header
                             if (headerTotal > 0 && totalFilesFromHeader === 0) {
                                 totalFilesFromHeader = headerTotal;
                             }
-                            
+
                             // Add newly parsed files
                             recordings.push(...parsedFiles);
-                            
+
                             // Emit new files for streaming display in smaller batches
                             if (onNewFiles && parsedFiles.length > 0) {
                                 console.log(`🔥 DEVICE: Processing ${parsedFiles.length} new files in smaller batches at ${new Date().toLocaleTimeString()}`);
-                                
+
                                 // Stream files in batches of 10 to make updates more granular
                                 const batchSize = 10;
                                 for (let i = 0; i < parsedFiles.length; i += batchSize) {
                                     const batch = parsedFiles.slice(i, i + batchSize);
                                     console.log(`📦 DEVICE: Emitting batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(parsedFiles.length/batchSize)} with ${batch.length} files at ${new Date().toLocaleTimeString()}`);
                                     onNewFiles(batch);
-                                    
+
                                     // Small delay between batches to make streaming visible
                                     if (i + batchSize < parsedFiles.length) {
                                         await this.delay(200); // 200ms between 10-file batches
                                     }
                                 }
                             }
-                            
+
                             // Store remaining partial data for next packet
                             partialPacketBuffer = remainingBuffer;
-                            
+
                             // Report progress
                             if (onProgress) {
                                 onProgress(recordings.length, totalFilesFromHeader, packetCount);
                             }
-                            
+
                             console.debug(`Packet ${packetCount}: +${parsedFiles.length} files (total: ${recordings.length}${totalFilesFromHeader ? `/${totalFilesFromHeader}` : ''})`);
+
+                            // Check if we have all expected files
+                            if (totalFilesFromHeader > 0 && recordings.length >= totalFilesFromHeader) {
+                                console.debug(`All ${totalFilesFromHeader} files received, ending stream`);
+                                break;
+                            }
                         }
                     }
                 }
 
-                // Stop condition: if we have files and haven't received new packets recently
-                if (recordings.length > 0) {
-                    await this.delay(100);
-                    
-                    const timeSinceStart = Date.now() - startTime;
-                    if (timeSinceStart > 3000) { // Stop after 3s if we have data
-                        console.debug(`Stopping stream after 3s with ${recordings.length} files from ${packetCount} packets`);
-                        break;
-                    }
-                }
-
             } catch (error) {
-                if (error instanceof DOMException && error.name === 'NetworkError') {
-                    if (recordings.length > 0) {
-                        console.debug(`USB timeout but we have ${recordings.length} files, ending stream`);
+                if (error instanceof Error && error.message === 'USB_TRANSFER_TIMEOUT') {
+                    consecutiveTimeouts++;
+                    console.debug(`USB transfer timeout ${consecutiveTimeouts}/${maxConsecutiveTimeouts}`);
+
+                    if (recordings.length > 0 && consecutiveTimeouts >= maxConsecutiveTimeouts) {
+                        console.debug(`${maxConsecutiveTimeouts} consecutive timeouts with ${recordings.length} files, ending stream`);
                         break;
                     }
+
+                    // Continue the loop to try again
+                    continue;
+                } else if (error instanceof DOMException && error.name === 'NetworkError') {
+                    consecutiveTimeouts++;
+                    console.debug(`USB NetworkError timeout ${consecutiveTimeouts}/${maxConsecutiveTimeouts}`);
+
+                    if (recordings.length > 0 && consecutiveTimeouts >= maxConsecutiveTimeouts) {
+                        console.debug(`${maxConsecutiveTimeouts} consecutive NetworkError timeouts with ${recordings.length} files, ending stream`);
+                        break;
+                    }
+
+                    // Continue the loop to try again
+                    continue;
+                } else {
+                    console.error('Error in streaming file list reception:', error);
+                    throw error;
                 }
-                console.error('Error in streaming file list reception:', error);
-                throw error;
             }
         }
 

@@ -12,20 +12,19 @@ ease of modification.
 # constants.py
 
 # --- USB Device Constants ---
-DEFAULT_VENDOR_ID = 0x10D6  # Actions Semiconductor
+DEFAULT_VENDOR_ID = 0x10d6  # Actions Semiconductor
 
 # All known HiDock device PIDs (no hierarchy - all devices are equal)
 HIDOCK_PRODUCT_IDS = [
+    0xb00e,  # P1 (older PID)
     0xAF0C,  # H1
     0xAF0D,  # H1E (older PID)
     0xB00D,  # H1E (newer PID)
-    0xAF0E,  # P1 (older PID)
-    0xB00E,  # P1 (newer PID)
 ]
 
 # Default PID only used if auto-discovery fails and no config exists
 # Using first in list arbitrarily - all devices are equally valid
-DEFAULT_PRODUCT_ID = HIDOCK_PRODUCT_IDS[0] if HIDOCK_PRODUCT_IDS else 0xAF0C
+DEFAULT_PRODUCT_ID = HIDOCK_PRODUCT_IDS[0] if HIDOCK_PRODUCT_IDS else 0xb00e
 
 # Target endpoints
 EP_OUT_ADDR = 0x01  # Physical endpoint 0x01, OUT direction

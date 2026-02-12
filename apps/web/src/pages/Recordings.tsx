@@ -375,9 +375,9 @@ export const Recordings: React.FC = () => {
         throw new Error('Device not connected. Please connect your HiDock device.');
       }
       
-      // Download with reasonable timeout (should be fast now without file list fetch)
+      // Download with extended timeout to allow for device recovery
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Download timeout after 30 seconds')), 30000);
+        setTimeout(() => reject(new Error('Download timeout after 60 seconds')), 60000);
       });
       
       // Pass the filename and size directly - no more file list fetching!
